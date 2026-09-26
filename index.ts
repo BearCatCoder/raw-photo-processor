@@ -706,6 +706,18 @@ export default definePlugin({
       })
     }
 
+    const queueMetadataAttachment = async (sessionID: string, job: Job, entry: JobEntry, recovery = false) => {
+      const prefix = recovery
+        ? `Stage recovery: this is the finished JPEG for ${path.basename(entry.raw)}, not a RAW-stage preview. `
+        : ""
+      await ctx.session.prompt({
+        sessionID,
+        delivery: "queue",
+        text: `${prefix}${metadataPromptText(job, entry)}`,
+        files: [{ uri: pathToFileURL(entry.identificationPreview).href }],
+      })
+    }
+
     await ctx.session.hook("context", (event) => {
       const jobID = sessionJobs.get(event.sessionID)
       const job = jobID ? jobs.get(jobID) : undefined
@@ -855,7 +867,11 @@ export default definePlugin({
           const job = jobs.get(input.jobID)
           if (!job) throw new Error("Unknown or completed RAW processing job.")
           if (job.sessionID !== context.sessionID) throw new Error("This RAW processing job belongs to another session.")
-          if (job.pending) throw new Error("Finalize metadata for the already-saved JPEG before processing another image.")
+          if (job.pending) {
+            const pendingEntry = job.entries[job.pending.selectedIndex]
+            await queueMetadataAttachment(context.sessionID, job, pendingEntry, true)
+            return { content: `Stage mismatch recovered: ${path.basename(pendingEntry.jpeg)} is already saved and still needs metadata. Its finished-JPEG preview was queued again. End this turn and use finalize_metadata only after that queued attachment arrives.` }
+          }
           const group = job.group ?? { type: "single" as const, indices: [job.index] }
           const selectedOffset = group.type === "bracket" ? input.selectedOffset : 0
           if (group.type === "bracket" && (!Number.isInteger(selectedOffset) || selectedOffset! < 0 || selectedOffset! > 4)) {
@@ -869,12 +885,7 @@ export default definePlugin({
           // Code Mode can reduce rich tool output to a pathname. Queue the finished
           // JPEG as a real session attachment so the next model turn receives image
           // pixels and the workflow resumes automatically after this tool call.
-          await ctx.session.prompt({
-            sessionID: context.sessionID,
-            delivery: "queue",
-            text: metadataPromptText(job, entry),
-            files: [{ uri: pathToFileURL(entry.identificationPreview).href }],
-          })
+          await queueMetadataAttachment(context.sessionID, job, entry)
           return metadataResult(job, entry)
         },
       })
@@ -896,7 +907,11 @@ export default definePlugin({
           const job = jobs.get(input.jobID)
           if (!job) throw new Error("Unknown or completed RAW processing job.")
           if (job.sessionID !== context.sessionID) throw new Error("This RAW processing job belongs to another session.")
-          if (!job.pending) throw new Error("Process and save an image before finalizing its metadata.")
+          if (!job.pending) {
+            const message = "Stage recovery: these are RAW-stage previews, not a finished JPEG. Inspect every attached preview and call apply before any identification, web research, or metadata work."
+            await queuePreviewAttachments(context.sessionID, job, message)
+            return { content: "Stage mismatch recovered: no image is waiting for metadata. The current RAW preview attachment(s) were queued again. End this turn and use apply only after that queued message arrives." }
+          }
           const { group, selectedIndex } = job.pending
           const entry = job.entries[selectedIndex]
           const edit = input.metadata
