@@ -569,10 +569,42 @@ async function nextUnprocessed(job: Job) {
     let jpegExists = false
     try { await stat(entry.psd); psdExists = true } catch {}
     try { await stat(entry.jpeg); jpegExists = true } catch {}
-    if (!psdExists && !jpegExists) return entry
-    job.skipped.push({ raw: entry.raw, reason: "Output already exists (overwrite=false)." })
-    job.index += 1
+    if (psdExists && jpegExists) {
+      job.skipped.push({ raw: entry.raw, reason: "Complete PSD/JPEG pair already exists (overwrite=false)." })
+      job.index += 1
+      continue
+    }
+    if (psdExists !== jpegExists) {
+      throw new Error(`Incomplete output pair for ${path.basename(entry.raw)}. Both ${entry.psd} and ${entry.jpeg} must exist, or remove/move the partial output before restarting.`)
+    }
+    return entry
   }
+}
+
+async function resumeAfterLastCompleted(job: Job) {
+  if (job.overwrite || !job.entries.length) return undefined
+  const psdDirectory = path.dirname(job.entries[0].psd)
+  const jpegDirectory = path.dirname(job.entries[0].jpeg)
+  const [psdItems, jpegItems] = await Promise.all([
+    readdir(psdDirectory, { withFileTypes: true }),
+    readdir(jpegDirectory, { withFileTypes: true }),
+  ])
+  const psdNames = new Set(psdItems.filter((item) => item.isFile()).map((item) => item.name.toLowerCase()))
+  const jpegNames = new Set(jpegItems.filter((item) => item.isFile()).map((item) => item.name.toLowerCase()))
+  let lastCompletedIndex = -1
+  for (let index = job.entries.length - 1; index >= 0; index -= 1) {
+    const entry = job.entries[index]
+    if (psdNames.has(path.basename(entry.psd).toLowerCase()) && jpegNames.has(path.basename(entry.jpeg).toLowerCase())) {
+      lastCompletedIndex = index
+      break
+    }
+  }
+  if (lastCompletedIndex < 0) return undefined
+  for (let index = 0; index <= lastCompletedIndex; index += 1) {
+    job.skipped.push({ raw: job.entries[index].raw, reason: "Before or at the last completed PSD/JPEG pair." })
+  }
+  job.index = lastCompletedIndex + 1
+  return job.entries[lastCompletedIndex]
 }
 
 export default definePlugin({
@@ -779,6 +811,7 @@ export default definePlugin({
           jobs.set(id, job)
           sessionJobs.set(context.sessionID, id)
           try {
+            const lastCompleted = await resumeAfterLastCompleted(job)
             await nextUnprocessed(job)
             if (job.index >= job.entries.length) {
               jobs.delete(id)
@@ -786,9 +819,12 @@ export default definePlugin({
               await rm(work, { recursive: true, force: true })
               return { content: `Nothing to process. ${job.skipped.length} image(s) skipped because outputs already exist.` }
             }
-            await context.progress({ status: `Reading metadata and creating preview(s) at image 1 of ${entries.length}` })
+            await context.progress({ status: `Reading metadata and creating preview(s) at image ${job.index + 1} of ${entries.length}` })
             await prepareCurrent(pluginDirectory, job, context.signal)
-            const message = `Found ${entries.length} RAW image(s). Existing outputs are ${job.overwrite ? "replaced" : "skipped"}.`
+            const resumeMessage = lastCompleted
+              ? ` Last complete output pair: ${path.basename(lastCompleted.psd)} / ${path.basename(lastCompleted.jpeg)}; resuming with the next photo.`
+              : ""
+            const message = `Found ${entries.length} RAW image(s). Existing outputs are ${job.overwrite ? "replaced" : "skipped"}.${resumeMessage}`
             await queuePreviewAttachments(context.sessionID, job, message)
             return currentResult(job, message)
           } catch (error) {

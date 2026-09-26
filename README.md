@@ -19,6 +19,8 @@ After Camera Raw, straightening, and cropping, the still-open Photoshop document
 
 Existing outputs are skipped by default. The RAW file is never modified. A temporary `.xmp` sidecar is used to pass settings to Camera Raw; an existing sidecar is restored byte-for-byte after the RAW is opened.
 
+On restart with overwrite disabled, the plugin inventories both output folders, finds the highest source image that has a matching PSD and JPEG, and resumes after that completed pair. For bracketed images, normal exposure-bias alignment advances from that point to the next `0 EV` bracket boundary. A lone PSD or JPEG is treated as an incomplete pair and reported instead of being silently skipped.
+
 Processing uses a strict two-phase workflow. First, every temporary JPEG preview—including all five images in a bracket set—is queued as an actual image attachment in the active OpenCode session so the model can select exposure and adjustments without relying on pathnames. Photoshop then saves the PSD followed by the maximum-quality JPEG. Second, the plugin queues an attachment-safe rendering of that finished JPEG for visual identification. These session attachments bypass Code Mode's path-only tool serialization. Only after identification does the plugin reopen both saved outputs and write matching metadata to the PSD and JPEG.
 
 Full-resolution quality-12 JPEGs can exceed OpenCode's 20 MB attachment limit. For identification only, the plugin therefore renders a temporary maximum-1600-pixel JPEG directly from the finished output. This attachment-safe copy preserves the final composition and appearance; it does not replace or modify the full-resolution JPEG. Metadata is still applied to the original PSD and quality-12 JPEG.
