@@ -722,7 +722,7 @@ export default definePlugin({
       const jobID = sessionJobs.get(event.sessionID)
       const job = jobID ? jobs.get(jobID) : undefined
       const allowed = new Set(job
-        ? [job.pending ? "raw_photo_processor_finalize_metadata" : "raw_photo_processor_apply", "raw_photo_processor_cancel"]
+        ? ["raw_photo_processor_apply", "raw_photo_processor_finalize_metadata", "raw_photo_processor_cancel"]
         : ["raw_photo_processor_start"])
       for (const name of Object.keys(event.tools)) {
         if (name.startsWith("raw_photo_processor_") && !allowed.has(name)) delete event.tools[name]
@@ -744,7 +744,7 @@ export default definePlugin({
           await ctx.session.prompt({
             sessionID,
             delivery,
-            text: `Process exactly ${JSON.stringify(folder)}. Call raw_photo_processor_start once. For every queued image message, inspect its attachments, call the one available RAW workflow tool, then end the turn whenever more attachments are queued. Preview stage: choose the best bracket frame, restrained Camera Raw corrections, crop, and a required image-specific AI visual assessment for polished, natural Photoshop finishing; use non-neutral residual exposure, brightness/contrast, tone, or color values when they visibly improve the image, and neutral values when they do not. Finished-JPEG stage: identify/research that photo and finalize unique metadata. Never restart, copy another photo's metadata, identify people, or cancel unless explicitly asked. Continue until complete.`,
+            text: `Process exactly ${JSON.stringify(folder)}. Call raw_photo_processor_start once. For every queued image message, inspect its attachments and call the stage-appropriate RAW workflow tool, then end the turn whenever more attachments are queued. Files without "-finished" are RAW-stage previews: choose the best bracket frame, restrained Camera Raw corrections, crop, and a required image-specific AI visual assessment for polished, natural Photoshop finishing, then call apply—never identify or research them. A single file whose name ends in "-finished.jpg" is the finished-JPEG stage: identify/research that photo and call finalize_metadata—never call apply. Use non-neutral residual exposure, brightness/contrast, tone, or color values when they visibly improve the image, and neutral values when they do not. Never restart, copy another photo's metadata, identify people, or cancel unless explicitly asked. Continue until complete.`,
           })
         },
       })
@@ -851,7 +851,7 @@ export default definePlugin({
 
       editor.add({
         name: "apply",
-        description: "Apply AI-selected Camera Raw, crop, and image-specific Photoshop finishing adjustments; save PSD/JPEG without generated metadata; then return the finished JPEG for identification.",
+        description: "RAW PREVIEW STAGE ONLY (attachment name has no '-finished'): apply AI-selected Camera Raw, crop, and image-specific Photoshop finishing adjustments; save PSD/JPEG; then queue the finished JPEG.",
         options: { namespace: "raw_photo_processor", codemode: true },
         input: {
           type: "object",
@@ -892,7 +892,7 @@ export default definePlugin({
 
       editor.add({
         name: "finalize_metadata",
-        description: "After visually identifying the finished JPEG, update metadata on both the already-saved PSD and JPEG, then continue the batch.",
+        description: "FINISHED JPEG STAGE ONLY (single attachment name ends in '-finished.jpg'): update metadata on the already-saved PSD/JPEG, then continue the batch. Never use for RAW-stage previews.",
         options: { namespace: "raw_photo_processor", codemode: true },
         input: {
           type: "object",

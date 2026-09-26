@@ -49,7 +49,7 @@ After each finalized photo, the plugin reports elapsed processing time and the O
 
 If the embedded plugin session API does not expose compaction, the Windows plugin uses the authenticated OpenCode CLI associated with the running app version to submit the same request. Set `OPENCODE_CLI` to an explicit executable path for a nonstandard installation.
 
-The model receives only the RAW workflow tool needed for the current stage: Start with no active job, Apply while reviewing previews, or Finalize Metadata after the finished JPEG. Cancel remains available during an active job. Five-shot preview sets are rendered in one Photoshop bridge call, and the attachment-safe identification JPEG is produced in the same bridge call as the PSD/JPEG save. This reduces a normal photo from five Photoshop launches to four and a bracket set from nine launches to four.
+With no active job, the model receives only Start. During an active job, Apply and Finalize Metadata remain available together so a queued turn cannot inherit a stale tool snapshot from the preceding stage; Cancel also remains available. Prompts and tool descriptions distinguish RAW previews from finished JPEGs by the `-finished.jpg` filename, and state validation plus automatic requeueing safely recovers a wrong-stage call. Five-shot preview sets are rendered in one Photoshop bridge call, and the attachment-safe identification JPEG is produced in the same bridge call as the PSD/JPEG save. This reduces a normal photo from five Photoshop launches to four and a bracket set from nine launches to four.
 
 The complete official IPTC Scene-NewsCodes vocabulary is bundled locally, so selecting Scene codes does not require a web lookup. Location research remains photo-specific.
 
