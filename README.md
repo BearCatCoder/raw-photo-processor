@@ -29,6 +29,8 @@ Queued attachments arrive on the next session turn. The immediate tool result th
 
 If the model calls the wrong workflow tool for an attachment stage, the plugin keeps the job active and automatically requeues the correct attachment: RAW previews for `apply`, or the finished JPEG for `finalize_metadata`. This prevents a recoverable stage-classification mistake from stopping the batch or writing metadata to the wrong image.
 
+Active job state is checkpointed in OpenCode plugin storage before each queued stage transition. If OpenCode reloads the project because this or another local plugin changes, the processor restores the job, current bracket, pending saved image, uniqueness sets, timing counters, and temporary previews instead of reporting an unknown job. Checkpoints and temporary files are removed only after completion, explicit cancellation, or a failed startup.
+
 Before processing, the plugin reads the Exposure Bias metadata up to five images ahead. A `0 EV` image followed by four non-zero-EV images is treated as one bracket set. The model compares all five previews, processes only the best exposure, and skips the other four. Non-zero frames encountered shortly before a new `0 EV` image are treated as an incomplete bracket run and skipped.
 
 When GPS coordinates are present, they are shown to the model so it can research the general subject/location and write an objective IPTC Description plus relevant subject and location keywords. The model is explicitly prohibited from identifying individual people.

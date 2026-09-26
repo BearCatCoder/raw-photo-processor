@@ -249,6 +249,11 @@ type TokenTotals = {
   cacheWrite: number
 }
 
+type StoredJob = Omit<Job, "descriptions" | "keywordSets"> & {
+  descriptions: string[]
+  keywordSets: string[]
+}
+
 function tokenDelta(current: TokenTotals, previous: TokenTotals): TokenTotals {
   return {
     input: Math.max(0, current.input - previous.input),
@@ -612,6 +617,36 @@ export default definePlugin({
   id: "raw-photo-processor",
   async setup(ctx) {
     const pluginDirectory = path.dirname(fileURLToPath(import.meta.url))
+    const checkpointPrefix = "active-job/"
+    const checkpointKey = (sessionID: string) => `${checkpointPrefix}${sessionID}`
+    const persistJob = async (job: Job) => {
+      const stored: StoredJob = {
+        ...job,
+        descriptions: [...job.descriptions],
+        keywordSets: [...job.keywordSets],
+      }
+      await ctx.storage.set(checkpointKey(job.sessionID), stored as any)
+    }
+    const forgetJob = async (job: Job) => {
+      await ctx.storage.remove(checkpointKey(job.sessionID))
+    }
+    let checkpointAfter: string | undefined
+    do {
+      const page = await ctx.storage.scan({ prefix: checkpointPrefix, after: checkpointAfter, limit: 100 })
+      for (const item of page.entries) {
+        const stored = item.value as StoredJob
+        if (!stored || typeof stored.id !== "string" || typeof stored.sessionID !== "string"
+          || typeof stored.folder !== "string" || !Array.isArray(stored.entries)) continue
+        const job: Job = {
+          ...stored,
+          descriptions: new Set(stored.descriptions ?? []),
+          keywordSets: new Set(stored.keywordSets ?? []),
+        }
+        jobs.set(job.id, job)
+        sessionJobs.set(job.sessionID, job.id)
+      }
+      checkpointAfter = page.next
+    } while (checkpointAfter)
     const configuredModel = process.env.RAW_PHOTO_PROCESSOR_MODEL
       || (typeof ctx.options.model === "string" ? ctx.options.model : "openai/gpt-6-luna")
     const requested = configuredModel.split("/")
@@ -823,17 +858,20 @@ export default definePlugin({
           }
           jobs.set(id, job)
           sessionJobs.set(context.sessionID, id)
+          await persistJob(job)
           try {
             const lastCompleted = await resumeAfterLastCompleted(job)
             await nextUnprocessed(job)
             if (job.index >= job.entries.length) {
               jobs.delete(id)
               if (sessionJobs.get(context.sessionID) === id) sessionJobs.delete(context.sessionID)
+              await forgetJob(job)
               await rm(work, { recursive: true, force: true })
               return { content: `Nothing to process. ${job.skipped.length} image(s) skipped because outputs already exist.` }
             }
             await context.progress({ status: `Reading metadata and creating preview(s) at image ${job.index + 1} of ${entries.length}` })
             await prepareCurrent(pluginDirectory, job, context.signal)
+            await persistJob(job)
             const resumeMessage = lastCompleted
               ? ` Last complete output pair: ${path.basename(lastCompleted.psd)} / ${path.basename(lastCompleted.jpeg)}; resuming with the next photo.`
               : ""
@@ -843,6 +881,7 @@ export default definePlugin({
           } catch (error) {
             jobs.delete(id)
             if (sessionJobs.get(context.sessionID) === id) sessionJobs.delete(context.sessionID)
+            await forgetJob(job)
             await rm(work, { recursive: true, force: true })
             throw error
           }
@@ -882,6 +921,7 @@ export default definePlugin({
           await context.progress({ status: `Processing selected exposure ${path.basename(entry.raw)} (${selectedIndex + 1}/${job.entries.length})` })
           await applyEdit(pluginDirectory, entry, input.edit, job.overwrite, context.signal)
           job.pending = { group, selectedIndex }
+          await persistJob(job)
           // Code Mode can reduce rich tool output to a pathname. Queue the finished
           // JPEG as a real session attachment so the next model turn receives image
           // pixels and the workflow resumes automatically after this tool call.
@@ -999,6 +1039,7 @@ export default definePlugin({
           job.tokenBaseline = currentTokens
           job.photosSinceCompaction += 1
           await nextUnprocessed(job)
+          await persistJob(job)
           const finished = job.index >= job.entries.length
           const contextPressure = finished ? undefined : await readContextPressure(context.sessionID)
           let compactionStatus = "Context compaction not needed; batch complete."
@@ -1013,6 +1054,7 @@ export default definePlugin({
           if (finished) {
             jobs.delete(job.id)
             if (sessionJobs.get(context.sessionID) === job.id) sessionJobs.delete(context.sessionID)
+            await forgetJob(job)
             await rm(job.work, { recursive: true, force: true })
             return {
               content: `${performance}\nRAW processing complete. Created ${job.completed.length} PSD/JPEG pair(s); skipped ${job.skipped.length}.\nPSD files: ${path.join(job.folder, "PSDs")}\nJPEG files: ${path.join(job.folder, "JPEGs")}`,
@@ -1021,6 +1063,7 @@ export default definePlugin({
           job.photoStartedAt = Date.now()
           await context.progress({ status: `Reading metadata and creating preview(s) at image ${job.index + 1} of ${job.entries.length}` })
           await prepareCurrent(pluginDirectory, job, context.signal)
+          await persistJob(job)
           const message = `Metadata updated after save for ${path.basename(entry.psd)} and JPEGs/${path.basename(entry.jpeg)}.\n${performance}`
           await queuePreviewAttachments(context.sessionID, job, message)
           return currentResult(job, message)
@@ -1043,6 +1086,7 @@ export default definePlugin({
           if (job.sessionID !== context.sessionID) throw new Error("This RAW processing job belongs to another session.")
           jobs.delete(input.jobID)
           if (sessionJobs.get(job.sessionID) === input.jobID) sessionJobs.delete(job.sessionID)
+          await forgetJob(job)
           await rm(job.work, { recursive: true, force: true })
           return { content: `Cancelled job ${input.jobID}. Completed output files were retained.` }
         },
@@ -1050,7 +1094,9 @@ export default definePlugin({
     })
 
     return async () => {
-      await Promise.all([...jobs.values()].map((job) => rm(job.work, { recursive: true, force: true })))
+      // Active jobs and their temporary previews are deliberately retained.
+      // The next plugin instance restores them from durable storage after a
+      // location reload, including reloads caused by unrelated plugin edits.
       jobs.clear()
       sessionJobs.clear()
     }
