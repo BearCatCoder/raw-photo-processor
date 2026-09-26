@@ -21,6 +21,7 @@ const IPTC_SCENES = {
 } as const
 const IPTC_SCENE_CODES = new Set<string>(Object.keys(IPTC_SCENES))
 const IPTC_SCENE_CATALOG = Object.entries(IPTC_SCENES).map(([code, name]) => `${code} ${name}`).join("; ")
+const PHOTOSHOP_FINISH_GUIDANCE = `For photoshopFinish, make a deliberate AI visual assessment for this individual image after planning the Camera Raw edit. Use the Photoshop controls only for the residual refinement that will make the finished photo look better: global exposure, final brightness/contrast, midtone placement and separation, and unwanted midtone color casts. Aim for a polished natural photograph with protected highlights, open but credible shadows, clear subject presence, and believable color. Preserve intentional warm/cool atmosphere and avoid clipping, crushed blacks, halos, excessive contrast, oversaturation, or an obvious filter. Do not mechanically default every value to neutral; choose a non-neutral value when a visible improvement is justified. Neutral values are correct for any control that does not improve the image. Account for the combined Camera Raw and Photoshop result so corrections are not duplicated.`
 
 const number = (minimum: number, maximum: number, description: string) => ({
   type: "number",
@@ -71,15 +72,15 @@ const EDIT_SCHEMA = {
     photoshopFinish: {
       type: "object",
       additionalProperties: false,
-      description: "Subtle photorealistic finishing applied to the open Photoshop document after crop and before PSD/JPEG saves. Correct only residual issues left after Camera Raw; use neutral values when no further correction is needed.",
+      description: "Required AI-selected, image-specific photorealistic finishing applied after crop and before PSD/JPEG saves. Deliberately assess every control for residual issues left after Camera Raw; do not blindly return all-neutral values, but keep each control neutral when changing it would not improve the image.",
       properties: {
-        exposure: number(-2, 2, "Residual Photoshop exposure correction in stops. Keep close to zero."),
-        brightness: number(-50, 50, "Residual Photoshop brightness correction."),
-        contrast: number(-50, 50, "Residual Photoshop contrast correction."),
-        toneGamma: number(0.5, 1.5, "Photoshop Levels midtone gamma. Use 1 for neutral; below 1 brightens midtones and above 1 darkens them."),
-        cyanRed: number(-30, 30, "Midtone color balance: negative adds cyan, positive adds red."),
-        magentaGreen: number(-30, 30, "Midtone color balance: negative adds magenta, positive adds green."),
-        yellowBlue: number(-30, 30, "Midtone color balance: negative adds yellow, positive adds blue."),
+        exposure: number(-2, 2, "AI-selected residual global exposure in stops after Camera Raw. Usually stay within about ±0.35; use 0 when global exposure is already correct and protect highlight/shadow detail."),
+        brightness: number(-50, 50, "AI-selected final luminance refinement. Usually stay within about ±10; improve subject presence without clipping or flattening the scene."),
+        contrast: number(-50, 50, "AI-selected final contrast refinement. Usually stay within about ±15; add separation only when natural tonal depth improves, without crushed blacks or harsh highlights."),
+        toneGamma: number(0.5, 1.5, "AI-selected Photoshop Levels midtone gamma for tonal placement and midtone separation. Use 1 for neutral; below 1 brightens midtones and above 1 darkens them. Usually stay near 0.90–1.10."),
+        cyanRed: number(-30, 30, "AI-selected midtone color balance: negative adds cyan, positive adds red. Correct an unwanted cast or subtly refine color; preserve intentional atmosphere. Usually stay within about ±8; use 0 when neutral."),
+        magentaGreen: number(-30, 30, "AI-selected midtone color balance: negative adds magenta, positive adds green. Correct an unwanted cast or subtly refine color; preserve intentional atmosphere. Usually stay within about ±8; use 0 when neutral."),
+        yellowBlue: number(-30, 30, "AI-selected midtone color balance: negative adds yellow, positive adds blue. Correct an unwanted cast or subtly refine color; preserve intentional atmosphere. Usually stay within about ±8; use 0 when neutral."),
       },
       required: ["exposure", "brightness", "contrast", "toneGamma", "cyanRed", "magentaGreen", "yellowBlue"],
     },
@@ -377,9 +378,9 @@ function currentPromptText(job: Job, message: string) {
     .join("\n")
   const metadataInstruction = `Use these preview(s) only to choose the exposure and image adjustments. Identification and metadata must wait until the finished JPEG is saved and returned.`
   const instruction = group.type === "bracket"
-    ? `This is a five-shot bracket set. Compare all five attached previews and call raw_photo_processor_apply with selectedOffset 0-4 for the best usable exposure plus restrained Camera Raw and Photoshop finishing adjustments. Only that frame will be processed.`
-    : `Analyze the attached preview, then call raw_photo_processor_apply with realistic Camera Raw values, a 3:2 crop, and a subtle photorealistic Photoshop finishing pass.`
-  return `${message}\nJob: ${job.id}\nSequence position ${job.index + 1} of ${job.entries.length}:\n${exposureSummary}\n${instruction}\n${metadataInstruction}`
+    ? `This is a five-shot bracket set. Compare all five attached previews and call raw_photo_processor_apply with selectedOffset 0-4 for the best usable exposure plus restrained Camera Raw and AI-selected Photoshop finishing adjustments. Only that frame will be processed.`
+    : `Analyze the attached preview, then call raw_photo_processor_apply with realistic Camera Raw values, a 3:2 crop, and an AI-selected photorealistic Photoshop finishing pass.`
+  return `${message}\nJob: ${job.id}\nSequence position ${job.index + 1} of ${job.entries.length}:\n${exposureSummary}\n${instruction}\n${PHOTOSHOP_FINISH_GUIDANCE}\n${metadataInstruction}`
 }
 
 function currentResult(job: Job, message: string) {
@@ -731,7 +732,7 @@ export default definePlugin({
           await ctx.session.prompt({
             sessionID,
             delivery,
-            text: `Process exactly ${JSON.stringify(folder)}. Call raw_photo_processor_start once. For every queued image message, inspect its attachments, call the one available RAW workflow tool, then end the turn whenever more attachments are queued. Preview stage: choose the best bracket frame, restrained Camera Raw corrections, crop, and required subtle photorealistic Photoshop finish. Finished-JPEG stage: identify/research that photo and finalize unique metadata. Never restart, copy another photo's metadata, identify people, or cancel unless explicitly asked. Continue until complete.`,
+            text: `Process exactly ${JSON.stringify(folder)}. Call raw_photo_processor_start once. For every queued image message, inspect its attachments, call the one available RAW workflow tool, then end the turn whenever more attachments are queued. Preview stage: choose the best bracket frame, restrained Camera Raw corrections, crop, and a required image-specific AI visual assessment for polished, natural Photoshop finishing; use non-neutral residual exposure, brightness/contrast, tone, or color values when they visibly improve the image, and neutral values when they do not. Finished-JPEG stage: identify/research that photo and finalize unique metadata. Never restart, copy another photo's metadata, identify people, or cancel unless explicitly asked. Continue until complete.`,
           })
         },
       })
@@ -838,7 +839,7 @@ export default definePlugin({
 
       editor.add({
         name: "apply",
-        description: "Apply image adjustments and save PSD/JPEG without generated metadata, then return the finished JPEG for identification.",
+        description: "Apply AI-selected Camera Raw, crop, and image-specific Photoshop finishing adjustments; save PSD/JPEG without generated metadata; then return the finished JPEG for identification.",
         options: { namespace: "raw_photo_processor", codemode: true },
         input: {
           type: "object",
