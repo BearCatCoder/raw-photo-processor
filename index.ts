@@ -631,9 +631,31 @@ export default definePlugin({
 
     const requestCompaction = async (sessionID: string) => {
       const compact = (ctx.session as any).compact
-      if (typeof compact !== "function") return "Context compaction unavailable in this OpenCode runtime."
       try {
-        await compact({ sessionID, delivery: "steer" })
+        if (typeof compact === "function") {
+          await compact({ sessionID, delivery: "steer" })
+        } else {
+          const cli = process.env.OPENCODE_CLI || path.join(
+            process.env.APPDATA ?? "",
+            "ai.opencode.desktop", "cli", ctx.app.version, "opencode-cli.exe",
+          )
+          await stat(cli)
+          await new Promise<void>((resolve, reject) => {
+            const child = spawn(cli, [
+              "api", "post", `/api/session/${sessionID}/compact`,
+              "--data", JSON.stringify({ delivery: "steer" }),
+            ], { windowsHide: true })
+            let stdout = ""
+            let stderr = ""
+            child.stdout.on("data", (chunk) => { stdout += chunk })
+            child.stderr.on("data", (chunk) => { stderr += chunk })
+            child.once("error", reject)
+            child.once("close", (code) => {
+              if (code === 0) return resolve()
+              reject(new Error((stderr || stdout || `OpenCode CLI exited with code ${code}`).trim()))
+            })
+          })
+        }
         return "Context compaction requested."
       } catch (error: any) {
         return `Context compaction request failed: ${error?.message ?? String(error)}`

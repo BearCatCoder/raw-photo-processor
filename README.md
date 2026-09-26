@@ -43,6 +43,8 @@ Rights Usage Terms use the actual Creator name (for example, `All rights reserve
 
 After each finalized photo, the plugin reports elapsed processing time and the OpenCode-recorded token delta (input, output, reasoning, and cache read/write). To avoid spending tokens on a summary after every image, it requests session compaction when the active context reaches 65% of the selected model's limit or after eight photos, whichever comes first. Set `RAW_PHOTO_PROCESSOR_COMPACT_AT`/plugin option `compactAt` from 0.4–0.9 and `RAW_PHOTO_PROCESSOR_COMPACT_EVERY`/`compactEvery` from 2–50 to tune those thresholds. Compaction replaces older conversation with a summary rather than deleting active plugin state.
 
+If the embedded plugin session API does not expose compaction, the Windows plugin uses the authenticated OpenCode CLI associated with the running app version to submit the same request. Set `OPENCODE_CLI` to an explicit executable path for a nonstandard installation.
+
 The model receives only the RAW workflow tool needed for the current stage: Start with no active job, Apply while reviewing previews, or Finalize Metadata after the finished JPEG. Cancel remains available during an active job. Five-shot preview sets are rendered in one Photoshop bridge call, and the attachment-safe identification JPEG is produced in the same bridge call as the PSD/JPEG save. This reduces a normal photo from five Photoshop launches to four and a bracket set from nine launches to four.
 
 The complete official IPTC Scene-NewsCodes vocabulary is bundled locally, so selecting Scene codes does not require a web lookup. Location research remains photo-specific.
